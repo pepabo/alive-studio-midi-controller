@@ -20,13 +20,36 @@ MIDIコントローラーで[Alive Studio](https://alive-project.com/studio)とO
 - 🚀 **自動起動**: システム起動時に自動で起動
 - 💾 **自動保存**: 設定変更を自動的に保存
 
-## 必要要件
+## インストール
 
-- Node.js 18以上とnpm
+### エンドユーザー向け
+
+[Releasesページ](https://github.com/pepabo/alive-studio-midi-controller/releases)から最新版をダウンロードしてインストールしてください。
+
+#### macOS
+1. `Alive Studio MIDI Controller.dmg` をダウンロード
+2. DMGファイルを開いてアプリケーションフォルダにドラッグ＆ドロップ
+3. アプリケーションを起動（メニューバーにアイコンが表示されます）
+
+#### Windows
+1. `Alive Studio MIDI Controller Setup.exe` をダウンロード
+2. インストーラーを実行してインストール
+3. アプリケーションを起動（システムトレイにアイコンが表示されます）
+
+### 必要要件
+
 - OBS Studio
 - MIDIコントローラー（例: Launchkey Mini MK4 25）
 
-## インストール
+## 開発者向けセットアップ
+
+### 必要要件
+
+- Node.js 20以上とnpm
+- OBS Studio
+- MIDIコントローラー（例: Launchkey Mini MK4 25）
+
+### インストール
 
 ```bash
 # 依存関係をインストール
