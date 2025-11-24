@@ -38,6 +38,19 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: npm run build:mac
 
+      - name: Sign app with ad-hoc signature (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          codesign --force --deep --sign - "release/mac-arm64/Alive Studio MIDI Controller.app"
+          codesign --verify --verbose "release/mac-arm64/Alive Studio MIDI Controller.app"
+
+      - name: Rebuild DMG and ZIP after signing (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          rm -f release/*.dmg release/*.zip release/*.blockmap
+          cd release/mac-arm64 && zip -r -y "../Alive Studio MIDI Controller-0.1.0-arm64-mac.zip" "Alive Studio MIDI Controller.app"
+          hdiutil create -volname "Alive Studio MIDI Controller 0.1.0" -srcfolder "Alive Studio MIDI Controller.app" -ov -format UDZO "../Alive Studio MIDI Controller-0.1.0-arm64.dmg"
+
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
         run: npm run build:win
