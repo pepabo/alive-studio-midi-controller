@@ -134,7 +134,7 @@ npm run compile:main
 
 ## リリース
 
-### リリース手順（macOS）
+### リリース手順
 
 1. **バージョンを更新**
    ```bash
@@ -150,17 +150,21 @@ npm run compile:main
    git push origin main
    ```
 
-3. **リリースを作成**
+3. **macOS版をリリース**
    ```bash
    npm run release
    ```
 
    このコマンドは以下を実行します：
-   - macOSアプリをビルド
+   - macOSアプリをビルド（ローカル）
    - GitHub Releaseを作成
    - DMGとZIPファイルをアップロード
 
-4. **リリース確認**
+4. **Windows版は自動ビルド**
+   - GitHub Actionsが自動的にWindows版をビルドしてアップロード
+   - 数分待つとリリースに追加されます
+
+5. **リリース確認**
    - リリースページ: https://github.com/pepabo/alive-studio-midi-controller/releases
 
 ## トラブルシューティング
