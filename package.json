@@ -10,9 +10,9 @@
     "compile": "npm run compile:renderer && npm run compile:main",
     "compile:renderer": "vite build",
     "compile:main": "tsc -p tsconfig.main.json",
-    "build:mac": "npm run compile && electron-builder --mac",
-    "build:win": "npm run compile && electron-builder --win",
-    "build": "npm run compile && electron-builder --mac --win",
+    "build:mac": "npm run compile && electron-builder --mac --publish never",
+    "build:win": "npm run compile && electron-builder --win --publish never",
+    "build": "npm run compile && electron-builder --mac --win --publish never",
     "type-check": "tsc --noEmit"
   },
   "keywords": [
@@ -60,11 +60,6 @@
   "build": {
     "appId": "com.kentarokuribayashi.alive-studio-midi-controller",
     "productName": "Alive Studio MIDI Controller",
-    "publish": {
-      "provider": "github",
-      "owner": "kentaro",
-      "repo": "alive-studio-midi-controller"
-    },
     "mac": {
       "category": "public.app-category.utilities",
       "icon": "assets/icon.png",
