@@ -13,6 +13,7 @@
     "build:mac": "npm run compile && electron-builder --mac --publish never",
     "build:win": "npm run compile && electron-builder --win --publish never",
     "build": "npm run compile && electron-builder --mac --win --publish never",
+    "release": "npm run build:mac && node scripts/release.js",
     "type-check": "tsc --noEmit"
   },
   "keywords": [

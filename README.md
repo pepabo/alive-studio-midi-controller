@@ -134,7 +134,7 @@ npm run compile:main
 
 ## リリース
 
-### リリース手順
+### リリース手順（macOS）
 
 1. **バージョンを更新**
    ```bash
@@ -143,24 +143,25 @@ npm run compile:main
    npm version major  # 1.0.0 → 2.0.0
    ```
 
-2. **タグをプッシュ**
+2. **変更をコミット**
    ```bash
-   git push origin main --tags
+   git add package.json package-lock.json
+   git commit -m "chore: Bump version to vX.X.X"
+   git push origin main
    ```
 
-3. **GitHub Actionsが自動実行**
-   - macOSとWindowsで並行ビルド
-   - GitHub Releasesに成果物を自動アップロード
-   - リリースページ: https://github.com/kentaro/alive-studio-midi-controller/releases
+3. **リリースを作成**
+   ```bash
+   npm run release
+   ```
 
-### GitHub Actions
+   このコマンドは以下を実行します：
+   - macOSアプリをビルド
+   - GitHub Releaseを作成
+   - DMGとZIPファイルをアップロード
 
-`.github/workflows/release.yml`でリリースプロセスを自動化：
-
-- **トリガー**: `v*`タグのプッシュ
-- **ビルドマトリックス**: macOS + Windows
-- **成果物**: DMG、ZIP（macOS）、NSIS installer、Portable（Windows）
-- **自動アップロード**: GitHub Releasesに自動公開
+4. **リリース確認**
+   - リリースページ: https://github.com/pepabo/alive-studio-midi-controller/releases
 
 ## トラブルシューティング
 
