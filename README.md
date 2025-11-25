@@ -198,4 +198,4 @@ MIT
 
 ## 作者
 
-[Kentaro Kuribayashi](https://kentarokuribayashi.com)
+[GMO Pepabo, Inc.](https://pepabo.com)
