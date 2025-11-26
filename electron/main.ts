@@ -101,6 +101,10 @@ function initMIDI(): boolean {
       // Note On: 0x90-0x9F
       if ((status & 0xF0) === 0x90 && velocity > 0) {
         console.log('MIDI Note On:', note, velocity);
+        // レンダラーにMIDIメッセージを送信
+        if (settingsWindow) {
+          settingsWindow.webContents.send('midi-message', note, velocity);
+        }
         handleMIDIMessage(note, velocity);
       }
     });

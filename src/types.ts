@@ -42,6 +42,8 @@ declare global {
       saveConfig: (config: AppConfig) => Promise<boolean>;
       getMidiDevices: () => Promise<string[]>;
       testOBSConnection: (obsConfig: OBSConfig) => Promise<TestOBSResult>;
+      onMidiMessage: (callback: (note: number, velocity: number) => void) => void;
+      removeMidiMessageListener: () => void;
     };
   }
 }

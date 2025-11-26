@@ -190,16 +190,32 @@ function BindingRow({ note, binding, updateBinding, deleteBinding }: BindingRowP
   )
 }
 
+interface MidiMessage {
+  note: number
+  velocity: number
+  timestamp: number
+}
+
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [midiDevices, setMidiDevices] = useState<string[]>([])
   const [obsTestResult, setObsTestResult] = useState<string>('')
   const [saveResult, setSaveResult] = useState<string>('')
   const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null)
+  const [lastMidiMessage, setLastMidiMessage] = useState<MidiMessage | null>(null)
 
   useEffect(() => {
     loadConfig()
     loadMidiDevices()
+
+    // MIDIメッセージのリスナーを登録
+    window.api.onMidiMessage((note, velocity) => {
+      setLastMidiMessage({ note, velocity, timestamp: Date.now() })
+    })
+
+    return () => {
+      window.api.removeMidiMessageListener()
+    }
   }, [])
 
   // 自動保存
@@ -542,6 +558,27 @@ function App() {
                 <Button onClick={loadMidiDevices} variant="outline" className="border-gray-300">
                   デバイスを再読み込み
                 </Button>
+
+                {/* MIDIモニター */}
+                <div className="mt-6 pt-4 border-t border-gray-200">
+                  <Label className="text-gray-700">MIDIモニター</Label>
+                  <div className="mt-2 p-4 bg-gray-100 rounded-lg font-mono text-center">
+                    {lastMidiMessage ? (
+                      <div className="space-y-1">
+                        <div className="text-2xl font-bold text-gray-900">
+                          ノート: {lastMidiMessage.note} ({getMIDINoteName(lastMidiMessage.note)})
+                        </div>
+                        <div className="text-sm text-gray-600">
+                          ベロシティ: {lastMidiMessage.velocity}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-gray-500">
+                        MIDIキーを押すと表示されます
+                      </div>
+                    )}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -553,6 +590,12 @@ function App() {
                 <CardDescription className="text-gray-600">
                   MIDIノートにアクションを紐づけます
                 </CardDescription>
+                {/* キー割り当て用MIDIモニター */}
+                {lastMidiMessage && (
+                  <div className="mt-2 p-2 bg-blue-50 rounded text-sm text-blue-700">
+                    最後に押されたノート: <span className="font-bold">{lastMidiMessage.note}</span> ({getMIDINoteName(lastMidiMessage.note)})
+                  </div>
+                )}
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 mb-4">
