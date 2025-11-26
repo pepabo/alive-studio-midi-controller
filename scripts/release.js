@@ -9,8 +9,22 @@ const packageJson = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8')
 );
 const version = `v${packageJson.version}`;
+const versionNumber = packageJson.version;
 
 console.log(`Creating release ${version}...`);
+
+// 古いリリースファイルを削除
+const releaseDir = path.join(__dirname, '../release');
+if (fs.existsSync(releaseDir)) {
+  const oldFiles = fs.readdirSync(releaseDir).filter(f =>
+    (f.endsWith('.dmg') || f.endsWith('.zip') || f.endsWith('.blockmap')) &&
+    !f.includes(versionNumber)
+  );
+  oldFiles.forEach(file => {
+    console.log(`Removing old file: ${file}`);
+    fs.unlinkSync(path.join(releaseDir, file));
+  });
+}
 
 try {
   // リリースを作成
@@ -21,10 +35,12 @@ try {
 
   console.log('Uploading macOS assets...');
 
-  // macOSファイルをアップロード
-  const releaseDir = path.join(__dirname, '../release');
+  // macOSファイルをアップロード（現在のバージョンのみ）
   const files = fs.readdirSync(releaseDir);
-  const assets = files.filter(f => f.endsWith('.dmg') || f.endsWith('.zip'));
+  const assets = files.filter(f =>
+    (f.endsWith('.dmg') || f.endsWith('.zip')) &&
+    f.includes(versionNumber)
+  );
 
   if (assets.length === 0) {
     console.error('No release files found!');
