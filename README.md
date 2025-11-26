@@ -2,6 +2,8 @@
 
 MIDIコントローラーで[Alive Studio](https://alive-project.com/studio)とOBS Studioを操作するElectronメニューバーアプリ。
 
+📖 **使い方の解説記事**: [配信ハック: MIDIコントローラーでAlive StudioとOBSを操作する](https://zenn.dev/pepabo/articles/38212df0fea6d7)
+
 ![Alive Studio MIDI Controller](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
 ![Electron](https://img.shields.io/badge/Electron-191970?style=for-the-badge&logo=Electron&logoColor=white)
