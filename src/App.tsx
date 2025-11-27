@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -22,9 +22,12 @@ interface BindingRowProps {
   deleteBinding: (note: string) => void
   changeBindingNote: (oldNote: string, newNote: string, binding: MIDIBinding) => void
   isHighlighted?: boolean
+  isWaitingForMidi?: boolean
+  onStartMidiCapture: (note: string) => void
+  onCancelMidiCapture: () => void
 }
 
-function BindingRow({ note, binding, updateBinding, deleteBinding, changeBindingNote, isHighlighted }: BindingRowProps) {
+function BindingRow({ note, binding, updateBinding, deleteBinding, changeBindingNote, isHighlighted, isWaitingForMidi, onStartMidiCapture, onCancelMidiCapture }: BindingRowProps) {
   const [displayNote, setDisplayNote] = useState(note)
 
   // noteプロパティが変更されたら、displayNoteを更新
@@ -33,35 +36,24 @@ function BindingRow({ note, binding, updateBinding, deleteBinding, changeBinding
   }, [note])
 
   return (
-    <div className={`grid grid-cols-[auto_auto_1fr_auto] items-center gap-3 p-4 rounded-lg border transition-all duration-500 ${isHighlighted ? 'bg-blue-50 border-blue-400 ring-2 ring-blue-300' : 'bg-white border-gray-200'}`}>
+    <div className={`grid grid-cols-[auto_auto_1fr_auto] items-center gap-3 p-4 rounded-lg border transition-all duration-500 ${isHighlighted ? 'bg-blue-50 border-blue-400 ring-2 ring-blue-300' : isWaitingForMidi ? 'bg-yellow-50 border-yellow-400 ring-2 ring-yellow-300' : 'bg-white border-gray-200'}`}>
       <div className="flex items-center gap-2">
-        <input
-          type="number"
-          defaultValue={note}
-          onInput={(e) => {
-            const input = e.target as HTMLInputElement
-            setDisplayNote(input.value)
-          }}
-          onBlur={(e) => {
-            const newNote = e.target.value
-            if (newNote !== note && newNote !== '' && !isNaN(parseInt(newNote))) {
-              const noteNum = parseInt(newNote)
-              if (noteNum >= 0 && noteNum <= 127) {
-                changeBindingNote(note, newNote, binding)
-              } else {
-                e.target.value = note
-                setDisplayNote(note)
-              }
-            } else if (newNote === '') {
-              e.target.value = note
-              setDisplayNote(note)
-            }
-          }}
-          className="h-10 w-16 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
-          placeholder="Note"
-          min="0"
-          max="127"
-        />
+        {isWaitingForMidi ? (
+          <button
+            onClick={onCancelMidiCapture}
+            className="h-10 w-16 rounded-md border border-yellow-400 bg-yellow-100 px-2 py-2 text-xs text-yellow-700 text-center animate-pulse"
+          >
+            待機中...
+          </button>
+        ) : (
+          <button
+            onClick={() => onStartMidiCapture(note)}
+            className="h-10 w-16 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 text-center hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            title="クリックしてMIDIキーを押すと設定できます"
+          >
+            {note}
+          </button>
+        )}
         <span className="text-sm text-gray-600 font-medium w-8">
           {getMIDINoteName(parseInt(displayNote))}
         </span>
@@ -121,8 +113,8 @@ function BindingRow({ note, binding, updateBinding, deleteBinding, changeBinding
                   <span className="text-xs text-gray-600 whitespace-nowrap">音量</span>
                   <Input
                     type="number"
-                    value={binding.value || 0}
-                    onChange={(e) => updateBinding(note, { ...binding, value: parseFloat(e.target.value) })}
+                    value={binding.value ?? 0}
+                    onChange={(e) => updateBinding(note, { ...binding, value: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
                     className="h-10 w-20 border-gray-300"
                     placeholder="-15"
                   />
@@ -132,8 +124,8 @@ function BindingRow({ note, binding, updateBinding, deleteBinding, changeBinding
                   <span className="text-xs text-gray-600 whitespace-nowrap">秒数</span>
                   <Input
                     type="number"
-                    value={binding.seconds !== undefined ? binding.seconds : 0}
-                    onChange={(e) => updateBinding(note, { ...binding, seconds: parseFloat(e.target.value) })}
+                    value={binding.seconds ?? 0}
+                    onChange={(e) => updateBinding(note, { ...binding, seconds: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
                     className="h-10 w-16 border-gray-300"
                     placeholder="0"
                   />
@@ -148,8 +140,8 @@ function BindingRow({ note, binding, updateBinding, deleteBinding, changeBinding
                   <span className="text-xs text-gray-600 whitespace-nowrap">秒数</span>
                   <Input
                     type="number"
-                    value={binding.seconds || 5}
-                    onChange={(e) => updateBinding(note, { ...binding, seconds: parseFloat(e.target.value) })}
+                    value={binding.seconds ?? 5}
+                    onChange={(e) => updateBinding(note, { ...binding, seconds: e.target.value === '' ? 5 : parseFloat(e.target.value) })}
                     className="h-10 w-16 border-gray-300"
                     placeholder="5"
                   />
@@ -161,8 +153,8 @@ function BindingRow({ note, binding, updateBinding, deleteBinding, changeBinding
                     <span className="text-xs text-gray-600 whitespace-nowrap">目標</span>
                     <Input
                       type="number"
-                      value={binding.value !== undefined ? binding.value : -15}
-                      onChange={(e) => updateBinding(note, { ...binding, value: parseFloat(e.target.value) })}
+                      value={binding.value ?? -15}
+                      onChange={(e) => updateBinding(note, { ...binding, value: e.target.value === '' ? -15 : parseFloat(e.target.value) })}
                       className="h-10 w-20 border-gray-300"
                       placeholder="-15"
                     />
@@ -202,6 +194,12 @@ interface MidiMessage {
   timestamp: number
 }
 
+// MIDI入力待ち状態の型
+type MidiCaptureState =
+  | { type: 'none' }
+  | { type: 'new' }  // 新規追加待ち
+  | { type: 'edit', originalNote: string, binding: MIDIBinding }  // 既存編集待ち
+
 function App() {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [midiDevices, setMidiDevices] = useState<string[]>([])
@@ -210,14 +208,77 @@ function App() {
   const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null)
   const [lastMidiMessage, setLastMidiMessage] = useState<MidiMessage | null>(null)
   const [newlyAddedNote, setNewlyAddedNote] = useState<string | null>(null)
+  const [midiCaptureState, setMidiCaptureState] = useState<MidiCaptureState>({ type: 'none' })
+
+  // useRefで最新の状態を参照（MIDIリスナーのclosure問題を回避）
+  const configRef = useRef(config)
+  const midiCaptureStateRef = useRef(midiCaptureState)
+  useEffect(() => { configRef.current = config }, [config])
+  useEffect(() => { midiCaptureStateRef.current = midiCaptureState }, [midiCaptureState])
 
   useEffect(() => {
     loadConfig()
     loadMidiDevices()
+  }, [])
 
-    // MIDIメッセージのリスナーを登録
+  // MIDIメッセージのリスナー（一度だけ登録し、refで最新の状態を参照）
+  useEffect(() => {
     window.api.onMidiMessage((note, velocity) => {
       setLastMidiMessage({ note, velocity, timestamp: Date.now() })
+
+      const currentConfig = configRef.current
+      const currentCaptureState = midiCaptureStateRef.current
+
+      // MIDI入力待ち状態の場合、ノート番号を設定
+      if (currentCaptureState.type !== 'none' && currentConfig) {
+        const noteStr = note.toString()
+        // 既に使われているノート番号の場合はスキップ（自分自身以外）
+        if (currentCaptureState.type === 'new') {
+          if (currentConfig.midi.bindings[noteStr]) {
+            // 既存のバインディングをハイライトして知らせる
+            setNewlyAddedNote(noteStr)
+            setTimeout(() => setNewlyAddedNote(null), 1500)
+            return
+          }
+          // 新規追加
+          setNewlyAddedNote(noteStr)
+          setTimeout(() => setNewlyAddedNote(null), 3000)
+          setConfig({
+            ...currentConfig,
+            midi: {
+              ...currentConfig.midi,
+              bindings: {
+                ...currentConfig.midi.bindings,
+                [noteStr]: { type: 'alive-studio', parameter: '' }
+              }
+            }
+          })
+        } else if (currentCaptureState.type === 'edit') {
+          const { originalNote, binding } = currentCaptureState
+          if (noteStr !== originalNote && currentConfig.midi.bindings[noteStr]) {
+            // 既存のバインディングをハイライトして知らせる
+            setNewlyAddedNote(noteStr)
+            setTimeout(() => setNewlyAddedNote(null), 1500)
+            return
+          }
+          if (noteStr !== originalNote) {
+            // ノート番号を変更
+            const newBindings = { ...currentConfig.midi.bindings }
+            delete newBindings[originalNote]
+            newBindings[noteStr] = binding
+            setNewlyAddedNote(noteStr)
+            setTimeout(() => setNewlyAddedNote(null), 3000)
+            setConfig({
+              ...currentConfig,
+              midi: {
+                ...currentConfig.midi,
+                bindings: newBindings
+              }
+            })
+          }
+        }
+        setMidiCaptureState({ type: 'none' })
+      }
     })
 
     return () => {
@@ -356,17 +417,20 @@ function App() {
 
   const addBinding = () => {
     if (!config) return
-    // 空のノート番号を探す
-    let note = 48
-    while (config.midi.bindings[note.toString()]) {
-      note++
-      if (note > 127) break
+    // MIDI入力待ち状態にする
+    setMidiCaptureState({ type: 'new' })
+  }
+
+  const startMidiCapture = (note: string) => {
+    if (!config) return
+    const binding = config.midi.bindings[note]
+    if (binding) {
+      setMidiCaptureState({ type: 'edit', originalNote: note, binding })
     }
-    const noteStr = note.toString()
-    setNewlyAddedNote(noteStr)
-    // 3秒後にハイライトを消す
-    setTimeout(() => setNewlyAddedNote(null), 3000)
-    updateBinding(noteStr, { type: 'alive-studio', parameter: '' })
+  }
+
+  const cancelMidiCapture = () => {
+    setMidiCaptureState({ type: 'none' })
   }
 
   if (!config) {
@@ -640,13 +704,27 @@ function App() {
                       deleteBinding={deleteBinding}
                       changeBindingNote={changeBindingNote}
                       isHighlighted={note === newlyAddedNote}
+                      isWaitingForMidi={midiCaptureState.type === 'edit' && midiCaptureState.originalNote === note}
+                      onStartMidiCapture={startMidiCapture}
+                      onCancelMidiCapture={cancelMidiCapture}
                     />
                   ))}
                 </div>
-                <Button onClick={addBinding} variant="outline" className="w-full border-gray-300 hover:bg-gray-50">
-                  <Plus className="w-4 h-4 mr-2" />
-                  割り当て追加
-                </Button>
+                {midiCaptureState.type === 'new' ? (
+                  <Button
+                    onClick={cancelMidiCapture}
+                    variant="outline"
+                    className="w-full border-yellow-400 bg-yellow-50 hover:bg-yellow-100 text-yellow-700 animate-pulse"
+                  >
+                    <Music className="w-4 h-4 mr-2" />
+                    MIDIキーを押してください（クリックでキャンセル）
+                  </Button>
+                ) : (
+                  <Button onClick={addBinding} variant="outline" className="w-full border-gray-300 hover:bg-gray-50">
+                    <Plus className="w-4 h-4 mr-2" />
+                    割り当て追加
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
