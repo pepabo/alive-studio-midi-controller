@@ -20,13 +20,20 @@ interface BindingRowProps {
   binding: MIDIBinding
   updateBinding: (note: string, binding: MIDIBinding) => void
   deleteBinding: (note: string) => void
+  changeBindingNote: (oldNote: string, newNote: string, binding: MIDIBinding) => void
+  isHighlighted?: boolean
 }
 
-function BindingRow({ note, binding, updateBinding, deleteBinding }: BindingRowProps) {
+function BindingRow({ note, binding, updateBinding, deleteBinding, changeBindingNote, isHighlighted }: BindingRowProps) {
   const [displayNote, setDisplayNote] = useState(note)
 
+  // noteプロパティが変更されたら、displayNoteを更新
+  useEffect(() => {
+    setDisplayNote(note)
+  }, [note])
+
   return (
-    <div className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-3 p-4 bg-white rounded-lg border border-gray-200">
+    <div className={`grid grid-cols-[auto_auto_1fr_auto] items-center gap-3 p-4 rounded-lg border transition-all duration-500 ${isHighlighted ? 'bg-blue-50 border-blue-400 ring-2 ring-blue-300' : 'bg-white border-gray-200'}`}>
       <div className="flex items-center gap-2">
         <input
           type="number"
@@ -40,8 +47,7 @@ function BindingRow({ note, binding, updateBinding, deleteBinding }: BindingRowP
             if (newNote !== note && newNote !== '' && !isNaN(parseInt(newNote))) {
               const noteNum = parseInt(newNote)
               if (noteNum >= 0 && noteNum <= 127) {
-                deleteBinding(note)
-                updateBinding(newNote, binding)
+                changeBindingNote(note, newNote, binding)
               } else {
                 e.target.value = note
                 setDisplayNote(note)
@@ -62,7 +68,7 @@ function BindingRow({ note, binding, updateBinding, deleteBinding }: BindingRowP
       </div>
 
       <Select
-        value={binding.type}
+        value={binding.type || 'alive-studio'}
         onValueChange={(val: 'obs' | 'alive-studio') => updateBinding(note, { ...binding, type: val })}
       >
         <SelectTrigger className="h-10 w-36 border-gray-300">
@@ -78,7 +84,7 @@ function BindingRow({ note, binding, updateBinding, deleteBinding }: BindingRowP
         {binding.type === 'obs' && (
           <>
             <Select
-              value={binding.action}
+              value={binding.action || ''}
               onValueChange={(val) => updateBinding(note, { ...binding, action: val })}
             >
               <SelectTrigger className="h-10 w-40 border-gray-300">
@@ -203,6 +209,7 @@ function App() {
   const [saveResult, setSaveResult] = useState<string>('')
   const [autoSaveTimer, setAutoSaveTimer] = useState<NodeJS.Timeout | null>(null)
   const [lastMidiMessage, setLastMidiMessage] = useState<MidiMessage | null>(null)
+  const [newlyAddedNote, setNewlyAddedNote] = useState<string | null>(null)
 
   useEffect(() => {
     loadConfig()
@@ -245,9 +252,7 @@ function App() {
 
   const loadConfig = async () => {
     try {
-      console.log('Loading config...')
       const cfg = await window.api.getConfig()
-      console.log('Config loaded:', cfg)
       setConfig(cfg)
     } catch (error) {
       console.error('Failed to load config:', error)
@@ -326,6 +331,29 @@ function App() {
     })
   }
 
+  const changeBindingNote = (oldNote: string, newNote: string, binding: MIDIBinding) => {
+    if (!config) return
+    if (oldNote === newNote) return
+    // 新しいノート番号が既に使われている場合は変更しない
+    if (config.midi.bindings[newNote]) return
+
+    const newBindings = { ...config.midi.bindings }
+    delete newBindings[oldNote]
+    newBindings[newNote] = binding
+
+    // 変更後のノートをハイライト
+    setNewlyAddedNote(newNote)
+    setTimeout(() => setNewlyAddedNote(null), 3000)
+
+    setConfig({
+      ...config,
+      midi: {
+        ...config.midi,
+        bindings: newBindings
+      }
+    })
+  }
+
   const addBinding = () => {
     if (!config) return
     // 空のノート番号を探す
@@ -334,7 +362,11 @@ function App() {
       note++
       if (note > 127) break
     }
-    updateBinding(note.toString(), { type: 'alive-studio', parameter: '' })
+    const noteStr = note.toString()
+    setNewlyAddedNote(noteStr)
+    // 3秒後にハイライトを消す
+    setTimeout(() => setNewlyAddedNote(null), 3000)
+    updateBinding(noteStr, { type: 'alive-studio', parameter: '' })
   }
 
   if (!config) {
@@ -470,7 +502,6 @@ function App() {
                       onChange={(e) => updateOBS('host', e.target.value)}
                       className="border-gray-300"
                       placeholder="localhost"
-                      defaultValue="localhost"
                     />
                   </div>
                   <div className="space-y-2">
@@ -482,7 +513,6 @@ function App() {
                       onChange={(e) => updateOBS('port', parseInt(e.target.value))}
                       className="border-gray-300"
                       placeholder="4455"
-                      defaultValue="4455"
                     />
                   </div>
                 </div>
@@ -542,7 +572,7 @@ function App() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="device" className="text-gray-700">MIDIデバイス</Label>
-                  <Select value={config.midi.device} onValueChange={(val) => updateMIDI('device', val)}>
+                  <Select value={config.midi.device || ''} onValueChange={(val) => updateMIDI('device', val)}>
                     <SelectTrigger className="border-gray-300">
                       <SelectValue placeholder="MIDIデバイスを選択" />
                     </SelectTrigger>
@@ -599,13 +629,17 @@ function App() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3 mb-4">
-                  {Object.entries(config.midi.bindings).map(([note, binding]) => (
+                  {Object.entries(config.midi.bindings)
+                    .sort(([a], [b]) => parseInt(a) - parseInt(b))
+                    .map(([note, binding]) => (
                     <BindingRow
                       key={note}
                       note={note}
                       binding={binding}
                       updateBinding={updateBinding}
                       deleteBinding={deleteBinding}
+                      changeBindingNote={changeBindingNote}
+                      isHighlighted={note === newlyAddedNote}
                     />
                   ))}
                 </div>
