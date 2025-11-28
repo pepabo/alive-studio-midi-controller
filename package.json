@@ -1,6 +1,6 @@
 {
   "name": "alive-studio-midi-controller",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Alive Studio MIDI Controller - MIDI controller bridge for OBS Studio with menubar integration",
   "main": "dist/main/main.js",
   "scripts": {
