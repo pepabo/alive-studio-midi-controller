@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Music, Settings, Wifi, CheckCircle2, XCircle, Trash2, Plus, BookOpen } from 'lucide-react'
+import { Music, Settings, Wifi, CheckCircle2, XCircle, Trash2, Plus, BookOpen, Volume2, Loader2 } from 'lucide-react'
 import type { AppConfig, MIDIBinding } from './types'
 
 function getMIDINoteName(noteNumber: number): string {
@@ -209,6 +209,21 @@ function App() {
   const [lastMidiMessage, setLastMidiMessage] = useState<MidiMessage | null>(null)
   const [newlyAddedNote, setNewlyAddedNote] = useState<string | null>(null)
   const [midiCaptureState, setMidiCaptureState] = useState<MidiCaptureState>({ type: 'none' })
+
+  // 音量バランス調整用の状態
+  const [micSources, setMicSources] = useState<string[]>([])
+  const [bgmSources, setBgmSources] = useState<string[]>([])
+  const [micSource, setMicSource] = useState<string>('')
+  const [bgmSource, setBgmSource] = useState<string>('')
+  const [bgmActionParam, setBgmActionParam] = useState<string>('')  // BGM再生用Alive Studioパラメータ
+  const [isMeasuring, setIsMeasuring] = useState(false)
+  const [measureResult, setMeasureResult] = useState<{
+    mic?: { peakDb: number; rmsDb: number; inputPeakDb: number; faderDb: number; sampleCount: number };
+    bgm?: { peakDb: number; rmsDb: number; inputPeakDb: number; faderDb: number; sampleCount: number };
+    suggestedMicFaderDb?: number;  // 推奨フェーダー設定
+    suggestedBgmFaderDb?: number;
+  } | null>(null)
+  const [volumeAdjustStatus, setVolumeAdjustStatus] = useState<string>('')
 
   // useRefで最新の状態を参照（MIDIリスナーのclosure問題を回避）
   const configRef = useRef(config)
@@ -433,6 +448,145 @@ function App() {
     setMidiCaptureState({ type: 'none' })
   }
 
+  // 音量バランス調整用の関数
+  const loadAudioSources = async () => {
+    try {
+      const { micSources: mics, bgmSources: bgms } = await window.api.getAudioSources()
+      setMicSources(mics)
+      setBgmSources(bgms)
+      // マイクが1つだけなら自動選択
+      if (mics.length === 1 && !micSource) {
+        setMicSource(mics[0])
+      }
+      // BGMソース名がOBS設定にあれば自動選択
+      if (config?.obs.bgmSourceName && bgms.includes(config.obs.bgmSourceName)) {
+        setBgmSource(config.obs.bgmSourceName)
+      }
+    } catch (error) {
+      console.error('Failed to load audio sources:', error)
+    }
+  }
+
+  const startMeasurement = async () => {
+    if (!micSource || !bgmSource) {
+      setVolumeAdjustStatus('マイクとBGMのソースを選択してください')
+      setTimeout(() => setVolumeAdjustStatus(''), 3000)
+      return
+    }
+
+    setIsMeasuring(true)
+    setMeasureResult(null)
+    setVolumeAdjustStatus('BGMを再生中...')
+
+    // BGMアクションが設定されている場合、自動再生
+    if (bgmActionParam) {
+      try {
+        await window.api.triggerAliveStudioAction(bgmActionParam)
+      } catch (error) {
+        console.error('Failed to trigger BGM:', error)
+      }
+    }
+
+    setVolumeAdjustStatus('音量を測定中... (10秒間)')
+
+    try {
+      const result = await window.api.startVolumeMeasure([micSource, bgmSource], 10000)
+
+      // 測定完了後、BGMを停止（同じアクションを再度送ると停止する）
+      if (bgmActionParam) {
+        try {
+          await window.api.triggerAliveStudioAction(bgmActionParam)
+        } catch (error) {
+          console.error('Failed to stop BGM:', error)
+        }
+      }
+
+      if (result.success && result.results) {
+        const micResult = result.results[micSource]
+        const bgmResult = result.results[bgmSource]
+
+        // OBS公式の音量レベル基準:
+        // - 緑: -50 〜 -20 dBFS
+        // - 黄: -20 〜 -9 dBFS (PML = Permitted Maximum Level)
+        // - 赤: -9 〜 -0.5 dBFS
+        //
+        // マイクのピーク目標: -9 dBFS (黄/赤境界、最大許容レベル)
+        // BGMのピーク目標: -18 dBFS (マイクより約9dB低く、緑上部〜黄下部)
+        const MIC_PEAK_TARGET = -9
+        const BGM_PEAK_TARGET = -18
+
+        // 調整計算: 新しいフェーダー値 = 現在のフェーダー + (目標ピーク - 測定ピーク)
+        // 例: 現在-6dB、測定ピーク-15dB、目標-9dB
+        //     → 新フェーダー = -6 + (-9 - (-15)) = -6 + 6 = 0dB
+        let suggestedMicFaderDb: number | undefined
+        let suggestedBgmFaderDb: number | undefined
+
+        if (micResult && micResult.peakDb > -Infinity && micResult.sampleCount > 0) {
+          const adjustment = MIC_PEAK_TARGET - micResult.peakDb
+          suggestedMicFaderDb = micResult.faderDb + adjustment
+        }
+
+        if (bgmResult && bgmResult.peakDb > -Infinity && bgmResult.sampleCount > 0) {
+          const adjustment = BGM_PEAK_TARGET - bgmResult.peakDb
+          suggestedBgmFaderDb = bgmResult.faderDb + adjustment
+        }
+
+        setMeasureResult({
+          mic: micResult,
+          bgm: bgmResult,
+          suggestedMicFaderDb,
+          suggestedBgmFaderDb
+        })
+
+        if (!micResult?.sampleCount || !bgmResult?.sampleCount) {
+          setVolumeAdjustStatus('測定完了（音声が検出されませんでした）')
+        } else {
+          setVolumeAdjustStatus('測定完了')
+        }
+      } else {
+        setVolumeAdjustStatus(`測定失敗: ${result.error}`)
+      }
+    } catch (error) {
+      setVolumeAdjustStatus(`エラー: ${error}`)
+    } finally {
+      setIsMeasuring(false)
+      setTimeout(() => setVolumeAdjustStatus(''), 3000)
+    }
+  }
+
+  const applyVolumeAdjustments = async () => {
+    if (!measureResult) return
+
+    setVolumeAdjustStatus('音量を調整中...')
+
+    try {
+      // マイクの調整
+      if (measureResult.suggestedMicFaderDb !== undefined) {
+        const micRes = await window.api.setSourceVolume(micSource, measureResult.suggestedMicFaderDb)
+        if (!micRes.success) {
+          setVolumeAdjustStatus(`マイク調整失敗: ${micRes.error}`)
+          return
+        }
+      }
+
+      // BGMの調整
+      if (measureResult.suggestedBgmFaderDb !== undefined) {
+        const bgmRes = await window.api.setSourceVolume(bgmSource, measureResult.suggestedBgmFaderDb)
+        if (!bgmRes.success) {
+          setVolumeAdjustStatus(`BGM調整失敗: ${bgmRes.error}`)
+          return
+        }
+      }
+
+      setVolumeAdjustStatus('音量調整完了!')
+      // 結果は消さずに表示したままにする（確認用）
+    } catch (error) {
+      setVolumeAdjustStatus(`エラー: ${error}`)
+    } finally {
+      setTimeout(() => setVolumeAdjustStatus(''), 3000)
+    }
+  }
+
   if (!config) {
     return (
       <div className="flex items-center justify-center h-screen bg-gradient-to-br from-slate-900 to-slate-800">
@@ -459,12 +613,12 @@ function App() {
         </div>
 
         <Tabs defaultValue="bindings" className="w-full">
-          <TabsList className="grid w-full grid-cols-4 mb-6 bg-white border border-gray-200">
+          <TabsList className="grid w-full grid-cols-5 mb-6 bg-white border border-gray-200">
             <TabsTrigger value="bindings" className="flex items-center gap-2">
               <Settings className="w-4 h-4" />
               キー割り当て
             </TabsTrigger>
-            <TabsTrigger value="obs" className="flex items-center gap-2">
+            <TabsTrigger value="obs" className="flex items-center gap-2" onClick={loadAudioSources}>
               <Wifi className="w-4 h-4" />
               OBS設定
             </TabsTrigger>
@@ -472,11 +626,230 @@ function App() {
               <Music className="w-4 h-4" />
               MIDIデバイス
             </TabsTrigger>
+            <TabsTrigger value="volume" className="flex items-center gap-2" onClick={loadAudioSources}>
+              <Volume2 className="w-4 h-4" />
+              音量バランス
+            </TabsTrigger>
             <TabsTrigger value="usage" className="flex items-center gap-2">
               <BookOpen className="w-4 h-4" />
               使い方
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="volume">
+            <Card className="bg-white border border-gray-200 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-gray-900">音量バランス調整</CardTitle>
+                <CardDescription className="text-gray-600">
+                  マイクとBGMの音量バランスを自動調整します（OBS公式基準: マイク -9dBFS/黄赤境界, BGM -18dBFS/緑上部）
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-gray-700">マイクソース</Label>
+                    <Select value={micSource} onValueChange={setMicSource}>
+                      <SelectTrigger className="border-gray-300">
+                        <SelectValue placeholder="マイクソースを選択" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {micSources.map((source) => (
+                          <SelectItem key={source} value={source}>
+                            {source}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {micSources.length === 0 && (
+                      <p className="text-xs text-gray-500">マイクソースが見つかりません</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-gray-700">BGMソース</Label>
+                    <Select value={bgmSource} onValueChange={setBgmSource}>
+                      <SelectTrigger className="border-gray-300">
+                        <SelectValue placeholder="BGMソースを選択" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bgmSources.map((source) => (
+                          <SelectItem key={source} value={source}>
+                            {source}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {bgmSources.length === 0 && (
+                      <p className="text-xs text-gray-500">BGMソースが見つかりません</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-gray-700">BGM自動再生（キー割り当てから選択）</Label>
+                  <Select value={bgmActionParam || '__none__'} onValueChange={(val) => setBgmActionParam(val === '__none__' ? '' : val)}>
+                    <SelectTrigger className="border-gray-300">
+                      <SelectValue placeholder="測定開始時に再生するBGMを選択（任意）" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">BGMを自動再生しない</SelectItem>
+                      {Object.entries(config.midi.bindings)
+                        .filter(([, binding]) =>
+                          binding.type === 'alive-studio' &&
+                          binding.parameter &&
+                          binding.parameter.toLowerCase().includes('bgm')
+                        )
+                        .map(([note, binding]) => (
+                          <SelectItem key={note} value={binding.parameter!}>
+                            ノート {note} ({getMIDINoteName(parseInt(note))})
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-gray-500">
+                    キー割り当てで設定したAlive StudioのBGMアクションを使用します
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={startMeasurement}
+                    disabled={isMeasuring || !micSource || !bgmSource}
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    {isMeasuring ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        測定中...
+                      </>
+                    ) : (
+                      '音量を測定'
+                    )}
+                  </Button>
+                  <Button onClick={loadAudioSources} variant="outline" className="border-gray-300">
+                    ソース一覧を再読込
+                  </Button>
+                </div>
+
+                {!isMeasuring && !measureResult && (
+                  <div className="p-3 bg-gray-100 border border-gray-300 rounded-lg">
+                    <p className="text-sm text-gray-700">
+                      {bgmActionParam ? (
+                        <>測定ボタンを押すとBGMが自動再生されます。表示される文章を読み上げてください。</>
+                      ) : (
+                        <>測定前に<span className="font-semibold">BGMを再生</span>してください。
+                        測定ボタンを押したら、表示される文章を読み上げてください。</>
+                      )}
+                    </p>
+                  </div>
+                )}
+
+                {isMeasuring && (
+                  <div className="p-4 bg-yellow-50 border border-yellow-300 rounded-lg animate-pulse">
+                    <p className="text-sm font-medium text-yellow-800 mb-2">以下の文章を読み上げてください:</p>
+                    <p className="text-lg text-yellow-900 leading-relaxed">
+                      「みなさんこんにちは！今日も配信に来てくれてありがとうございます。
+                      ゆっくりしていってくださいね。コメントもお待ちしています！」
+                    </p>
+                  </div>
+                )}
+
+                {measureResult && (
+                  <div className="space-y-4 p-4 bg-gray-50 rounded-lg">
+                    <h4 className="font-semibold text-gray-900">測定結果</h4>
+                    <div className="grid grid-cols-2 gap-4">
+                      {measureResult.mic && measureResult.mic.sampleCount > 0 && (
+                        <div className="space-y-2 p-3 bg-white rounded border">
+                          <div className="text-sm font-medium text-gray-700">マイク ({micSource})</div>
+                          <div className="text-sm text-gray-600 space-y-1">
+                            <div className="flex justify-between">
+                              <span>ピーク:</span>
+                              <span className={`font-mono ${measureResult.mic.peakDb > -9 ? 'text-red-600' : measureResult.mic.peakDb > -20 ? 'text-yellow-600' : 'text-green-600'}`}>
+                                {measureResult.mic.peakDb.toFixed(1)} dBFS
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>RMS (体感):</span>
+                              <span className="font-mono">{measureResult.mic.rmsDb.toFixed(1)} dBFS</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>現在フェーダー:</span>
+                              <span className="font-mono">{measureResult.mic.faderDb.toFixed(1)} dB</span>
+                            </div>
+                            {measureResult.suggestedMicFaderDb !== undefined && (
+                              <div className="mt-2 pt-2 border-t flex justify-between text-blue-700">
+                                <span>推奨フェーダー:</span>
+                                <span className="font-mono font-semibold">{measureResult.suggestedMicFaderDb.toFixed(1)} dB</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-400">目標: -9 dBFS (黄/赤境界)</div>
+                        </div>
+                      )}
+                      {measureResult.mic && measureResult.mic.sampleCount === 0 && (
+                        <div className="p-3 bg-white rounded border">
+                          <div className="text-sm font-medium text-gray-700">マイク ({micSource})</div>
+                          <div className="text-sm text-gray-500 mt-2">音声が検出されませんでした</div>
+                        </div>
+                      )}
+                      {measureResult.bgm && measureResult.bgm.sampleCount > 0 && (
+                        <div className="space-y-2 p-3 bg-white rounded border">
+                          <div className="text-sm font-medium text-gray-700">BGM ({bgmSource})</div>
+                          <div className="text-sm text-gray-600 space-y-1">
+                            <div className="flex justify-between">
+                              <span>ピーク:</span>
+                              <span className={`font-mono ${measureResult.bgm.peakDb > -9 ? 'text-red-600' : measureResult.bgm.peakDb > -20 ? 'text-yellow-600' : 'text-green-600'}`}>
+                                {measureResult.bgm.peakDb.toFixed(1)} dBFS
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>RMS (体感):</span>
+                              <span className="font-mono">{measureResult.bgm.rmsDb.toFixed(1)} dBFS</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>現在フェーダー:</span>
+                              <span className="font-mono">{measureResult.bgm.faderDb.toFixed(1)} dB</span>
+                            </div>
+                            {measureResult.suggestedBgmFaderDb !== undefined && (
+                              <div className="mt-2 pt-2 border-t flex justify-between text-blue-700">
+                                <span>推奨フェーダー:</span>
+                                <span className="font-mono font-semibold">{measureResult.suggestedBgmFaderDb.toFixed(1)} dB</span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-400">目標: -18 dBFS (緑上部)</div>
+                        </div>
+                      )}
+                      {measureResult.bgm && measureResult.bgm.sampleCount === 0 && (
+                        <div className="p-3 bg-white rounded border">
+                          <div className="text-sm font-medium text-gray-700">BGM ({bgmSource})</div>
+                          <div className="text-sm text-gray-500 mt-2">音声が検出されませんでした</div>
+                        </div>
+                      )}
+                    </div>
+                    {(measureResult.suggestedMicFaderDb !== undefined || measureResult.suggestedBgmFaderDb !== undefined) && (
+                      <Button
+                        onClick={applyVolumeAdjustments}
+                        className="w-full bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        推奨値を適用
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <h4 className="font-semibold text-blue-900 mb-2">使い方</h4>
+                  <ol className="list-decimal list-inside text-sm text-blue-800 space-y-1">
+                    <li>OBSに接続していることを確認</li>
+                    <li>マイクソースとBGMソースを選択</li>
+                    <li>マイクに向かって話しながら「音量を測定」をクリック</li>
+                    <li>5秒間の音量を測定し、最適な調整値を計算</li>
+                    <li>「推奨値を適用」で自動調整</li>
+                  </ol>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="usage">
             <Card className="bg-white border border-gray-200 shadow-sm">
@@ -593,13 +966,18 @@ function App() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="bgm" className="text-gray-700">BGMソース名</Label>
-                  <Input
-                    id="bgm"
-                    value={config.obs.bgmSourceName}
-                    onChange={(e) => updateOBS('bgmSourceName', e.target.value)}
-                    className="border-gray-300"
-                    placeholder="[Alive]BGM"
-                  />
+                  <Select value={config.obs.bgmSourceName || ''} onValueChange={(val) => updateOBS('bgmSourceName', val)}>
+                    <SelectTrigger className="border-gray-300">
+                      <SelectValue placeholder="BGMソースを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bgmSources.map((source) => (
+                        <SelectItem key={source} value={source}>
+                          {source}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="flex items-center gap-3">
                   <Button onClick={testOBSConnection} className="bg-blue-600 hover:bg-blue-700 text-white">
@@ -730,11 +1108,30 @@ function App() {
           </TabsContent>
         </Tabs>
 
+        {/* トースト通知 */}
         {saveResult && (
           <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
             <div className="flex items-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg shadow-lg">
               <CheckCircle2 className="w-5 h-5" />
               <span className="font-medium">{saveResult}</span>
+            </div>
+          </div>
+        )}
+        {volumeAdjustStatus && (
+          <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-300">
+            <div className={`flex items-center gap-2 px-4 py-3 rounded-lg shadow-lg ${
+              volumeAdjustStatus.includes('完了') ? 'bg-green-600 text-white' :
+              volumeAdjustStatus.includes('失敗') || volumeAdjustStatus.includes('エラー') ? 'bg-red-600 text-white' :
+              'bg-blue-600 text-white'
+            }`}>
+              {volumeAdjustStatus.includes('完了') ? (
+                <CheckCircle2 className="w-5 h-5" />
+              ) : volumeAdjustStatus.includes('失敗') || volumeAdjustStatus.includes('エラー') ? (
+                <XCircle className="w-5 h-5" />
+              ) : (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              )}
+              <span className="font-medium">{volumeAdjustStatus}</span>
             </div>
           </div>
         )}

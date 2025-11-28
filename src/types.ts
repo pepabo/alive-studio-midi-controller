@@ -35,6 +35,20 @@ export interface TestOBSResult {
   error?: string;
 }
 
+export interface VolumeMeasureResult {
+  success: boolean;
+  error?: string;
+  results?: {
+    [key: string]: {
+      peakDb: number;        // 最大ピーク値 (dBFS) - フェーダー後
+      rmsDb: number;         // RMS平均 (dBFS) - 体感音量に近い
+      inputPeakDb: number;   // 入力ピーク値 (dBFS) - フェーダー前
+      faderDb: number;       // 現在のフェーダー設定 (dB)
+      sampleCount: number;   // 有効サンプル数
+    };
+  };
+}
+
 declare global {
   interface Window {
     api: {
@@ -44,6 +58,12 @@ declare global {
       testOBSConnection: (obsConfig: OBSConfig) => Promise<TestOBSResult>;
       onMidiMessage: (callback: (note: number, velocity: number) => void) => void;
       removeMidiMessageListener: () => void;
+      // 音量バランス調整用
+      getAudioSources: () => Promise<{ micSources: string[]; bgmSources: string[] }>;
+      startVolumeMeasure: (sources: string[], durationMs: number) => Promise<VolumeMeasureResult>;
+      setSourceVolume: (sourceName: string, db: number) => Promise<{ success: boolean; error?: string }>;
+      // Alive Studioアクションをトリガー（MIDIキー割り当てと同じ処理）
+      triggerAliveStudioAction: (parameter: string) => Promise<{ success: boolean; error?: string }>;
     };
   }
 }

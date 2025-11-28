@@ -16,6 +16,11 @@ let obsConnected = false;
 let recordingState = false;
 let fadeTimer: NodeJS.Timeout | null = null;
 
+// 音量測定用
+let volumeMeasuring = false;
+// ピーク値を収集: { magnitude: number[], peak: number[], inputPeak: number[] }
+let volumeSamples: Map<string, { magnitude: number[], peak: number[], inputPeak: number[] }> = new Map();
+
 /**
  * OBS WebSocket接続
  */
@@ -30,9 +35,45 @@ async function connectOBS(): Promise<boolean> {
     const { host, port, password } = config.obs;
 
     // パスワードが空の場合はundefinedを渡す
-    await obsClient.connect(`ws://${host}:${port}`, password || undefined);
+    // EventSubscriptionには InputVolumeMeters (1 << 16) を含める
+    await obsClient.connect(`ws://${host}:${port}`, password || undefined, {
+      eventSubscriptions: (1 << 0) | (1 << 2) | (1 << 16) // General | Inputs | InputVolumeMeters
+    });
     obsConnected = true;
     console.log('Connected to OBS WebSocket');
+
+    // InputVolumeMetersイベントのリスナーを設定
+    // inputLevelsMul形式: [[ch0_magnitude, ch0_peak, ch0_inputPeak], [ch1_magnitude, ch1_peak, ch1_inputPeak], ...]
+    // - magnitude: RMS値（300ms統合）
+    // - peak: ピーク値（フェーダー後、視聴者が聞く音量）
+    // - inputPeak: 入力ピーク値（フェーダー前）
+    obsClient.on('InputVolumeMeters', (data: any) => {
+      if (volumeMeasuring && data.inputs) {
+        for (const input of data.inputs) {
+          const name = input.inputName;
+          const levels = input.inputLevelsMul;
+          if (levels && levels.length > 0) {
+            // 全チャンネルの最大値を取る（ステレオの場合は左右の大きい方）
+            let maxMagnitude = 0;
+            let maxPeak = 0;
+            let maxInputPeak = 0;
+            for (const ch of levels) {
+              if (ch[0] > maxMagnitude) maxMagnitude = ch[0];
+              if (ch[1] > maxPeak) maxPeak = ch[1];
+              if (ch[2] > maxInputPeak) maxInputPeak = ch[2];
+            }
+
+            if (!volumeSamples.has(name)) {
+              volumeSamples.set(name, { magnitude: [], peak: [], inputPeak: [] });
+            }
+            const samples = volumeSamples.get(name)!;
+            samples.magnitude.push(maxMagnitude);
+            samples.peak.push(maxPeak);
+            samples.inputPeak.push(maxInputPeak);
+          }
+        }
+      }
+    });
 
     try {
       const status = await obsClient.call('GetRecordStatus');
@@ -752,6 +793,156 @@ function setupIPCHandlers(): void {
       const testClient = new OBSWebSocket();
       await testClient.connect(`ws://${obsConfig.host}:${obsConfig.port}`, obsConfig.password);
       await testClient.disconnect();
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // 音声ソース一覧を取得（マイク用とBGM用に分類）
+  ipcMain.handle('get-audio-sources', async () => {
+    if (!obsConnected || !obsClient) {
+      return { micSources: [], bgmSources: [] };
+    }
+    try {
+      const micSources: string[] = [];
+      const bgmSources: string[] = [];
+
+      // マイク入力デバイスのinputKind
+      const micInputKinds = [
+        'coreaudio_input_capture',  // macOS マイク
+        'wasapi_input_capture',     // Windows マイク
+        'alsa_input_capture',       // Linux マイク
+        'pulse_input_capture',      // Linux PulseAudio マイク
+      ];
+
+      // 全ソースを取得してinputKindで分類
+      const { inputs } = await obsClient.call('GetInputList');
+      for (const input of inputs) {
+        const inputName = String(input.inputName);
+        const inputKind = String(input.inputKind);
+
+        try {
+          // 音声を持つソースかチェック
+          await obsClient.call('GetInputVolume', { inputName });
+
+          // inputKindでマイクかどうか判定
+          if (micInputKinds.includes(inputKind)) {
+            micSources.push(inputName);
+          } else {
+            bgmSources.push(inputName);
+          }
+        } catch {
+          // 音声を持たないソースは無視
+        }
+      }
+
+      console.log('Mic sources:', micSources);
+      console.log('BGM sources:', bgmSources);
+      return { micSources, bgmSources };
+    } catch (error) {
+      console.error('Failed to get audio sources:', error);
+      return { micSources: [], bgmSources: [] };
+    }
+  });
+
+  // 音量測定開始
+  ipcMain.handle('start-volume-measure', async (event, sourcesToMeasure: string[], durationMs: number) => {
+    if (!obsConnected || !obsClient) {
+      return { success: false, error: 'OBS not connected' };
+    }
+
+    volumeSamples.clear();
+    volumeMeasuring = true;
+
+    return new Promise((resolve) => {
+      setTimeout(async () => {
+        volumeMeasuring = false;
+
+        const results: { [key: string]: {
+          peakDb: number,           // 最大ピーク値 (dBFS) - フェーダー後
+          rmsDb: number,            // RMS平均 (dBFS) - 体感音量に近い
+          inputPeakDb: number,      // 入力ピーク値 (dBFS) - フェーダー前
+          faderDb: number,          // 現在のフェーダー設定 (dB)
+          sampleCount: number       // 有効サンプル数
+        } } = {};
+
+        for (const source of sourcesToMeasure) {
+          const samples = volumeSamples.get(source);
+          if (samples && samples.peak.length > 0) {
+            // 無音サンプルをフィルタ（0.00001 ≈ -100dB以下は無視）
+            const validPeaks = samples.peak.filter(s => s > 0.00001);
+            const validMagnitudes = samples.magnitude.filter(s => s > 0.00001);
+            const validInputPeaks = samples.inputPeak.filter(s => s > 0.00001);
+
+            if (validPeaks.length > 0) {
+              // ピーク: 測定期間中の最大値を使用
+              const maxPeak = Math.max(...validPeaks);
+              // RMS: 二乗平均平方根で計算
+              const rmsValue = Math.sqrt(validMagnitudes.reduce((sum, v) => sum + v * v, 0) / validMagnitudes.length);
+              // 入力ピーク: 最大値
+              const maxInputPeak = validInputPeaks.length > 0 ? Math.max(...validInputPeaks) : maxPeak;
+
+              results[source] = {
+                peakDb: 20 * Math.log10(maxPeak),
+                rmsDb: 20 * Math.log10(rmsValue),
+                inputPeakDb: 20 * Math.log10(maxInputPeak),
+                faderDb: 0,
+                sampleCount: validPeaks.length
+              };
+            } else {
+              results[source] = { peakDb: -Infinity, rmsDb: -Infinity, inputPeakDb: -Infinity, faderDb: 0, sampleCount: 0 };
+            }
+          } else {
+            results[source] = { peakDb: -Infinity, rmsDb: -Infinity, inputPeakDb: -Infinity, faderDb: 0, sampleCount: 0 };
+          }
+        }
+
+        // 現在のフェーダー設定を取得
+        await Promise.all(
+          sourcesToMeasure.map(async (source) => {
+            try {
+              const vol = await obsClient!.call('GetInputVolume', { inputName: source });
+              if (results[source]) {
+                results[source].faderDb = 20 * Math.log10(vol.inputVolumeMul || 1);
+              }
+            } catch {
+              // ignore
+            }
+          })
+        );
+
+        console.log('Volume measurement results:', results);
+        resolve({ success: true, results });
+      }, durationMs);
+    });
+  });
+
+  // 音量設定を適用
+  ipcMain.handle('set-source-volume', async (event, sourceName: string, db: number) => {
+    if (!obsConnected || !obsClient) {
+      return { success: false, error: 'OBS not connected' };
+    }
+    try {
+      const mul = Math.pow(10, db / 20);
+      await obsClient.call('SetInputVolume', {
+        inputName: sourceName,
+        inputVolumeMul: mul
+      });
+      console.log(`Set volume of ${sourceName} to ${db}dB`);
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Alive Studioアクションをトリガー（MIDIキー割り当てと同じ処理）
+  ipcMain.handle('trigger-alive-studio-action', async (event, parameter: string) => {
+    if (!obsConnected || !obsClient) {
+      return { success: false, error: 'OBS not connected' };
+    }
+    try {
+      await executeAliveStudioAction({ type: 'alive-studio', parameter });
       return { success: true };
     } catch (error: any) {
       return { success: false, error: error.message };
