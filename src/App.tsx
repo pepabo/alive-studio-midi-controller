@@ -228,6 +228,7 @@ function App() {
   // useRefで最新の状態を参照（MIDIリスナーのclosure問題を回避）
   const configRef = useRef(config)
   const midiCaptureStateRef = useRef(midiCaptureState)
+  const isInitialLoad = useRef(true)  // 初回読み込みフラグ
   useEffect(() => { configRef.current = config }, [config])
   useEffect(() => { midiCaptureStateRef.current = midiCaptureState }, [midiCaptureState])
 
@@ -304,6 +305,12 @@ function App() {
   // 自動保存
   useEffect(() => {
     if (!config) return
+
+    // 初回読み込み時は保存しない
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false
+      return
+    }
 
     // 既存のタイマーをクリア
     if (autoSaveTimer) {
