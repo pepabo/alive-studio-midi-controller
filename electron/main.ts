@@ -253,14 +253,10 @@ async function executeOBSAction(binding: MIDIBinding): Promise<void> {
       }
       break;
     case 'fadeIn':
-      if (seconds !== undefined) {
-        await fadeInVolume(seconds, value);
-      }
+      await fadeInVolume(seconds ?? 5, value);
       break;
     case 'fadeOut':
-      if (seconds !== undefined) {
-        await fadeOutVolume(seconds);
-      }
+      await fadeOutVolume(seconds ?? 5);
       break;
     default:
       console.warn('Unknown OBS action:', action);
